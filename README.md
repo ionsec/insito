@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="insito-logo.png" alt="INSITO" width="420">
+</p>
+
 # INSITO
 
 INSITO is a single-file C tool that recovers files encrypted by the Rhysida
@@ -9,7 +13,10 @@ key reproducible once the encryption clock is known. It exists so victims and
 responders can restore data on systems they own or are authorized to
 remediate.
 
-Downloads: [RELEASE_URL] - Project site: [IONSEC_URL]
+Downloads: https://github.com/ionsec/insito/releases/tag/v1.0.0 - Project site: https://ionsec.io/resources/insito-rhysida-esxi-recovery
+
+Public release: CyberWeek 2026 — Monday, 9 November 2026. The repository and
+the release binary go public then; until then both stay private.
 
 ## Threat context
 
