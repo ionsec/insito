@@ -1,0 +1,23 @@
+# build artifacts
+*.o
+*.a
+# the vendored prebuilt static libs at vendor/ root are tracked on purpose
+!vendor/*.a
+!vendor/*.o
+# build outputs inside the vendored source trees stay ignored
+
+# binaries
+insito
+insito-asan
+*.exe
+
+# local run / CI leftovers
+SHA256SUMS
+testsynthetic/
+recovery-report-*
+core
+core.*
+insito-v*-static
+insito
+*.o
+*.a

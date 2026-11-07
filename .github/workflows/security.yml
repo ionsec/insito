@@ -1,0 +1,151 @@
+name: security
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (c-cpp)
+    # CodeQL is only free for public repos; on private repos without GHAS the
+    # analyze/upload steps cannot run. This guard keeps the workflow green now
+    # and activates CodeQL automatically once the repo goes public.
+    # Note: schedule events carry no repository payload, so scheduled runs
+    # skip this job — gitleaks still covers the weekly sweep; dispatch runs
+    # after going public include it.
+    if: ${{ github.event.repository.visibility == 'public' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:c-cpp"
+
+  secret-scan:
+    name: secret scan (gitleaks + private-key grep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download gitleaks 8.30.1 and verify checksum
+        # Org-standard pinned scan (no GITLEAKS_LICENSE requirement) — mirror of
+        # ionsec/php2shell-detector/.github/workflows/gitleaks.yml.
+        run: |
+          curl -fsSL --retry 3 -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check -
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      - name: Scan git history
+        id: scan
+        continue-on-error: true # report first, gate after upload attempt
+        run: |
+          ./gitleaks git --config gitleaks.toml -v --redact \
+            --report-format sarif \
+            --report-path "$GITHUB_WORKSPACE/gitleaks.sarif"
+
+      - name: Resolve repository visibility
+        id: visibility
+        run: |
+          private=$(curl -fsSL -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}" | jq -r '.private')
+          echo "private=${private}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SARIF to Code Scanning (public repos only)
+        if: ${{ always() && steps.visibility.outputs.private == 'false' }}
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - name: Fail if leaks were found
+        if: ${{ always() && steps.scan.outcome == 'failure' }}
+        run: |
+          echo "::error title=Gitleaks::Committed secrets detected (redacted in log; run gitleaks locally with a full report to triage)."
+          exit 1
+
+      - name: Generic private-key scan
+        run: |
+          set -euo pipefail
+          # Private key material must never land in this repo. The embedded
+          # defensive key checked in via pubkey_elf.h is public-half only.
+          # Vendored upstream test-fixture keys under vendor/libtomcrypt are
+          # excluded on the same paths as the gitleaks.toml allowlist; every
+          # other tracked file (ours included) is scanned.
+          files=$(git ls-files \
+            | grep -Ev '^vendor/libtomcrypt/(tests/|src/misc/pem/|doc/)' \
+            | grep -Ev '^vendor/libtomcrypt/src/(modes|stream)/.*_test\.c$')
+          # shellcheck disable=SC2086
+          match=$(grep -Ein -- 'BEGIN ([A-Z]+ )*PRIVATE KEY' $files || true)
+          if [ -n "$match" ]; then
+            printf '%s\n' "$match"
+            echo '::error::private key material found - remove it and rotate'
+            exit 1
+          fi
+          echo 'no private key material found'
+
+  sanitizers:
+    name: ASan + UBSan build + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # leak detection off: the tool deliberately keeps process-lifetime state
+      # (embedded key, sweep buffers) until exit; ASan/UBSan still enforce
+      # memory-safety and UB findings with halt_on_error.
+      ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:detect_leaks=0
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build vendored static libs (from source)
+        run: make vendor-clean vendor
+
+      - name: Compile insito with ASan+UBSan
+        run: |
+          gcc -O1 -g -fno-omit-frame-pointer \
+              -fsanitize=address,undefined -fno-sanitize-recover=all \
+              -Wall -Wextra -DUSE_LTM -DLTM_DESC -DESXI_KEY \
+              -Ivendor/libtomcrypt/src/headers \
+              -o insito-asan insito.c vendor/ltm_desc3.o vendor/libtomcrypt.a vendor/libtommath.a
+
+      - name: Run test suite under sanitizers
+        env:
+          CC: gcc
+          CFLAGS: -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=all
+          LDFLAGS: -fsanitize=address,undefined
+          INSITO_BIN: ./insito-asan
+        run: bash tests/run.sh

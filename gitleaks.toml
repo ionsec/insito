@@ -1,0 +1,19 @@
+# IONSEC/insito gitleaks config (extends the default ruleset).
+#
+# The vendored LibTomCrypt tree deliberately ships upstream's own test
+# fixtures: PEM/PKCS/SSH test keys, test.key/test_dsa.key and cipher test
+# vectors. They are published content of github.com/libtom/libtomcrypt (the
+# keys are test fixtures, not IONSEC material) and are required for the
+# vendored test suite to compile and run. Everything outside these paths
+# scans against the full default ruleset.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Upstream LibTomCrypt test fixtures (vendored, third-party)"
+paths = [
+  '''vendor/libtomcrypt/tests/''',
+  '''vendor/libtomcrypt/src/misc/pem/''',
+  '''vendor/libtomcrypt/src/modes/.*_test\.c''',
+  '''vendor/libtomcrypt/src/stream/.*_test\.c''',
+]

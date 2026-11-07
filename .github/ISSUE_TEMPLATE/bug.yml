@@ -1,0 +1,38 @@
+name: Bug report
+description: Problems with recovery, build, or reports. Security issues go to SECURITY.md, not here.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not attach live malware samples, campaign artifacts, keys, or real
+        victim data.** Use a synthetic reproduction (`tests/make_corpus.c`) or
+        sanitized console output.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Expected vs actual behavior. For recovery issues include the console output and the summary section of the report file.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: INSITO version/build SHA256 (from SHA256SUMS), ESXi or Linux release, filesystem (VMFS volume / local), how many files were restored vs not matched.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact commands used (e.g. "insito --scan <path>" then "insito --datastore <path> --accept-license --yes") and what the sweep printed.
+    validations:
+      required: false
+  - type: checkboxes
+    id: attest
+    attributes:
+      label: Attestation
+      options:
+        - label: I confirm nothing in this report is a live sample, campaign artifact, or real victim data.
+          required: true

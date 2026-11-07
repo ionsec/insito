@@ -1,0 +1,56 @@
+version: 1.18.2-develop+{build}
+branches:
+  only:
+  - master
+  - develop
+  - /^release/
+  - /^appveyor/
+  - /^build-ci/
+image:
+- Visual Studio 2022
+- Visual Studio 2019
+- Visual Studio 2017
+- Visual Studio 2015
+environment:
+  matrix:
+  - LTC_CC: cl
+  - LTC_CC: clang-cl
+matrix:
+  exclude:
+  - image: Visual Studio 2019
+    LTC_CC: clang-cl
+  - image: Visual Studio 2017
+    LTC_CC: clang-cl
+  - image: Visual Studio 2015
+    LTC_CC: clang-cl
+build_script:
+- cmd: >-
+    if "Visual Studio 2022"=="%APPVEYOR_BUILD_WORKER_IMAGE%" call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+      if "Visual Studio 2019"=="%APPVEYOR_BUILD_WORKER_IMAGE%" call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
+      if "Visual Studio 2017"=="%APPVEYOR_BUILD_WORKER_IMAGE%" call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
+      if "Visual Studio 2015"=="%APPVEYOR_BUILD_WORKER_IMAGE%" call "C:\Program Files\Microsoft SDKs\Windows\v7.1\Bin\SetEnv.cmd" /x64
+      if "Visual Studio 2015"=="%APPVEYOR_BUILD_WORKER_IMAGE%" call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" x86_amd64
+      if "clang-cl"=="%LTC_CC%" set "PATH=C:\Program Files\LLVM\bin;C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\Llvm\x64\bin;%PATH%"
+      if "clang-cl"=="%LTC_CC%" clang-cl --version
+      cd..
+      git clone https://github.com/libtom/libtommath.git --branch=master
+      cp libtomcrypt\.ci\cmake.bat libtommath\cmake.bat
+      cd libtommath
+      cmake.bat
+      nmake -f makefile.msvc
+      cd..
+      cd libtomcrypt
+      .ci\cmake.bat
+      nmake -f makefile.msvc all CC=%LTC_CC%
+      cp test.exe test-stock.exe
+      cp timing.exe timing-stock.exe
+      nmake -f makefile.msvc clean
+      nmake -f makefile.msvc all CC=%LTC_CC% CFLAGS="/Ox /DUSE_LTM /DLTM_DESC /DLTC_NO_ACCEL /I../libtommath"
+test_script:
+- cmd: >-
+    test-stock.exe
+      test.exe
+      timing-stock.exe cipher_ecb aes
+      timing.exe cipher_ecb aes
+      timing-stock.exe hash sha
+      timing.exe hash sha

@@ -1,0 +1,168 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+      - 'release/**'
+      - 'support/**'
+      - 'ci/**'
+  pull_request:
+    branches:
+      - master
+      - develop
+      - 'release/**'
+      - 'support/**'
+      - 'ci/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  Docs:
+    runs-on: ubuntu-24.04
+    container: texlive/texlive:latest-medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: generate PDF
+        run: |
+          make docs
+          cp doc/crypt.pdf crypt-${{ github.run_id }}.pdf
+      - name: upload PDF
+        uses: actions/upload-artifact@v4
+        with:
+          name: crypt-${{ github.run_id }}.pdf
+          path: crypt-${{ github.run_id }}.pdf
+  Build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        cc: [ gcc, clang ]
+        os: [ ubuntu-22.04, ubuntu-24.04 ]
+        config:
+          - { BUILDNAME: 'META_BUILDS',             BUILDOPTIONS: '-DGMP_DESC',                                                           BUILDSCRIPT: '.ci/meta_builds.sh' }
+          - { BUILDNAME: 'VALGRIND',                BUILDOPTIONS: '',                                                                     BUILDSCRIPT: '.ci/valgrind.sh' }
+          - { BUILDNAME: 'STOCK',                   BUILDOPTIONS: '',                                                                     BUILDSCRIPT: '.ci/run.sh' }
+          - { BUILDNAME: 'BUILD_OPTIONS',           BUILDOPTIONS: '',                                                                     BUILDSCRIPT: '.ci/build_options.sh' }
+          - { BUILDNAME: 'STOCK-MPI',               BUILDOPTIONS: '-ULTM_DESC -UTFM_DESC -UUSE_LTM -UUSE_TFM',                            BUILDSCRIPT: '.ci/run.sh' }
+          - { BUILDNAME: 'STOCK+ARGTYPE=1',         BUILDOPTIONS: '-DARGTYPE=1',                                                          BUILDSCRIPT: '.ci/run.sh' }
+          - { BUILDNAME: 'STOCK+ARGTYPE=2',         BUILDOPTIONS: '-DARGTYPE=2',                                                          BUILDSCRIPT: '.ci/run.sh' }
+          - { BUILDNAME: 'STOCK+ARGTYPE=3',         BUILDOPTIONS: '-DARGTYPE=3',                                                          BUILDSCRIPT: '.ci/run.sh' }
+          - { BUILDNAME: 'STOCK+ARGTYPE=4',         BUILDOPTIONS: '-DARGTYPE=4',                                                          BUILDSCRIPT: '.ci/run.sh' }
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: |
+            sudo apt-get update -qq
+            sudo apt-get install -y libgmp-dev valgrind libtool-bin clang-tools lcov ruby clang
+            sudo apt-get remove -y libtommath1
+            sudo gem install coveralls-lcov
+            curl -s https://packagecloud.io/install/repositories/libtom/packages/script.deb.sh | sudo bash
+            sudo apt-get install libtfm-git-dev libtommath-git-dev
+      - name: run tests
+        env:
+          CC: "${{ matrix.cc }}"
+          PR_NUMBER: ${{ github.event.number }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash "${{ matrix.config.BUILDSCRIPT }}" "${{ matrix.config.BUILDNAME }}" "-DUSE_LTM -DLTM_DESC" "makefile V=1"        "${{ matrix.config.BUILDOPTIONS }}" "-ltommath"
+          bash "${{ matrix.config.BUILDSCRIPT }}" "${{ matrix.config.BUILDNAME }}" "-DUSE_TFM -DTFM_DESC" "makefile.shared V=1" "${{ matrix.config.BUILDOPTIONS }}" "-ltfm"
+      - name: regular logs
+        if: ${{ !failure() }}
+        run: |
+          cat gcc_1.txt || true
+          cat gcc_2.txt || true
+      - name: error logs
+        if: ${{ failure() }}
+        run: |
+          cat gcc_1.txt || true
+          cat gcc_2.txt || true
+          cat test_std.txt || true
+          cat test_err.txt || true
+          cat tv.txt || true
+      - name: pack build directory
+        if: ${{ failure() }}
+        run: |
+          tar cJf build-${{ github.run_id }}.tar.xz --exclude ./build-${{ github.run_id }}.tar.xz .
+      - name: upload Artifact
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.run_id }}.tar.xz
+          path: build-${{ github.run_id }}.tar.xz
+          retention-days: 1
+
+  Amalgam:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        cc: [ gcc, clang ]
+        os: [ ubuntu-22.04, ubuntu-24.04 ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: |
+            sudo apt-get update -qq
+            sudo apt-get remove -y libtommath1
+            curl -s https://packagecloud.io/install/repositories/libtom/packages/script.deb.sh | sudo bash
+            sudo apt-get install libtommath-git-dev
+      - name: run tests
+        env:
+          CC: "${{ matrix.cc }}"
+        run: |
+          make pre_gen
+          make CFLAGS="-DLTM_DESC -DUSE_LTM" EXTRALIBS="-ltommath" AMALGAM=1 -j$(nproc) check
+
+  CMake:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, ubuntu-24.04, ubuntu-22.04-arm, ubuntu-24.04-arm ]
+        build_type: [ '', -DCMAKE_BUILD_TYPE=Debug, -DCMAKE_BUILD_TYPE=Release, -DCMAKE_BUILD_TYPE=RelWithDebInfo, -DCMAKE_BUILD_TYPE=MinSizeRel ]
+        cc: [ clang, gcc ]
+        cflags: [ '', '-DLTC_CFLAGS="-DLTC_NO_ASM"']
+        config:
+          # Static library build
+          - { CMAKEOPTIONS: '-DBUILD_SHARED_LIBS=Off' }
+          # Shared library build
+          - { CMAKEOPTIONS: '-DBUILD_SHARED_LIBS=On'  }
+    steps:
+      - uses: actions/checkout@v4
+      - name: install dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 20
+          max_attempts: 3
+          command: |
+            sudo apt-get update -qq
+            sudo apt-get remove -y libtommath1
+            curl -s https://packagecloud.io/install/repositories/libtom/packages/script.deb.sh | sudo bash
+            sudo apt-get install libtommath-git-dev
+            sudo apt-get install -y cmake gcc clang llvm
+      - name: build
+        run: |
+          mkdir build
+          cd build
+          CC=${{ matrix.cc }} cmake ${{ matrix.config.CMAKEOPTIONS }} ${{ matrix.build_type }} ${{ matrix.cflags }} ..
+          make -j$(nproc)
+      - name: test
+        run: |
+          cd build
+          CC=${{ matrix.cc }} cmake ${{ matrix.config.CMAKEOPTIONS }} ${{ matrix.build_type }} ${{ matrix.cflags }} -DBUILD_TESTING=On ..
+          make -j$(nproc)
+          ctest
+      - name: error logs
+        if: ${{ failure() }}
+        run: |
+          cat build/Testing/Temporary/LastTest.log || true
+          cat demo/build/Testing/Temporary/LastTest.log || true

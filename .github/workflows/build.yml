@@ -1,0 +1,86 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build + test (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up gcc toolchain
+        run: |
+          gcc --version
+          make --version | head -1
+
+      - name: Optional compiler cache (ccache)
+        uses: hendrikmuhs/ccache-action@v1.2
+        continue-on-error: true
+        with:
+          key: ${{ github.job }}-${{ runner.os }}-gcc
+          max-size: 200M
+          variant: ccache
+
+      - name: Build vendored static libs (from source)
+        run: make vendor-clean vendor
+
+      - name: Compile insito (static, -Wall -Wextra visible)
+        run: |
+          gcc -O2 -s -static -Wall -Wextra -DUSE_LTM -DLTM_DESC -DESXI_KEY \
+              -Ivendor/libtomcrypt/src/headers \
+              -o insito insito.c vendor/ltm_desc3.o vendor/libtomcrypt.a vendor/libtommath.a
+          ls -la insito
+          file insito
+
+      - name: Run tests
+        run: bash tests/run.sh
+
+      - name: Checksums (release-asset naming)
+        run: |
+          # Rename to the release-asset form the write-up links, then checksum
+          # that name, so `sha256sum -c SHA256SUMS` works with the asset as-is.
+          ARTIFACT="insito-${GITHUB_REF_NAME#v}-static"
+          mv insito "${ARTIFACT}"
+          sha256sum "${ARTIFACT}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: insito-linux-x86_64
+          if-no-files-found: error
+          path: |
+            insito-*-static
+            SHA256SUMS
+
+  release:
+    name: release (tag push)
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: insito-linux-x86_64
+
+      - name: Attach binaries and checksums to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            insito-*-static
+            SHA256SUMS
