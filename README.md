@@ -213,9 +213,11 @@ Yes, by default: the sweep centers on file mtimes. Copy with
 
 **Which builds are covered?**
 Static Linux x86-64 release binaries (CI-built and verified against
-`SHA256SUMS`, see [RELEASE_URL]); they run unchanged under ESXi (BusyBox) as
-well as ordinary Linux. Anything else: build from source with the command
-above.
+`SHA256SUMS`, see github.com/ionsec/insito/releases/tag/v1.0.0); they run
+unchanged under ESXi (BusyBox) as well as ordinary Linux. Anything else:
+build from source with the command above. The v1.0.0 release binary has
+been scanned on VirusTotal; the scan is public:
+https://www.virustotal.com/gui/file/fa0402e646c671478ca387c71f597a27fcf49a5cc1e0782bccc9a092afb659f5
 
 **Does INSITO need network access?**
 No. Nothing is uploaded, fetched, or phoned home; the tool is fully offline.
